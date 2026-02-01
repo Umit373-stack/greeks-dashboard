@@ -120,28 +120,7 @@
             font-weight: bold;
         }
         
-        .charts-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        
-        .chart-container {
-            background: rgba(255, 255, 255, 0.05);
-            padding: 20px;
-            border-radius: 15px;
-            backdrop-filter: blur(10px);
-        }
-        
-        .chart-title {
-            font-size: 1.3em;
-            margin-bottom: 15px;
-            color: #00ff88;
-            text-align: center;
-        }
-        
-        /* NOUVELLE SECTION TRADINGVIEW */
+        /* SECTION TRADINGVIEW */
         .tradingview-section {
             background: rgba(0, 255, 136, 0.1);
             border: 2px solid #00ff88;
@@ -169,7 +148,7 @@
             border-radius: 8px;
             font-family: 'Courier New', monospace;
             font-size: 0.9em;
-            max-height: 300px;
+            max-height: 150px;
             overflow-y: auto;
             margin-bottom: 15px;
             white-space: pre-wrap;
@@ -191,6 +170,27 @@
         @keyframes pulse {
             0%, 100% { transform: scale(1); }
             50% { transform: scale(1.05); }
+        }
+        
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .chart-container {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .chart-title {
+            font-size: 1.3em;
+            margin-bottom: 15px;
+            color: #00ff88;
+            text-align: center;
         }
         
         .logout-btn {
@@ -266,7 +266,7 @@
             </div>
         </div>
         
-        <!-- NOUVELLE SECTION TRADINGVIEW -->
+        <!-- SECTION TRADINGVIEW -->
         <div class="tradingview-section">
             <h2>📈 Données TradingView - Copier & Coller</h2>
             <p>Copiez ces données et collez-les dans votre indicateur TradingView Pine Script</p>
@@ -299,7 +299,6 @@
             const ticker = document.getElementById('ticker').value.toUpperCase();
             const dte = document.getElementById('dte').value;
             
-            // Charger les données pour les graphiques
             fetch(`/api/data?ticker=${ticker}&dte=${dte}`)
                 .then(res => res.json())
                 .then(data => {
@@ -308,21 +307,18 @@
                         return;
                     }
                     
-                    // Mettre à jour les infos
                     document.getElementById('info-ticker').textContent = data.ticker;
                     document.getElementById('info-spot').textContent = '$' + data.spot.toFixed(2);
                     document.getElementById('info-exp').textContent = data.expiration;
                     document.getElementById('info-dte').textContent = data.dte;
                     document.getElementById('info-time').textContent = data.timestamp;
                     
-                    // Créer les graphiques
                     createChart('gamma-chart', data.strikes, data.call_gex, data.put_gex, data.total_gex, 'Gamma (M$)', data.spot);
                     createChart('vanna-chart', data.strikes, data.call_vanna, data.put_vanna, data.total_vanna, 'Vanna', data.spot);
                     createChart('charm-chart', data.strikes, data.call_charm, data.put_charm, data.total_charm, 'Charm', data.spot);
                 })
                 .catch(err => console.error(err));
             
-            // Charger les données CSV pour TradingView
             loadTradingViewCSV();
         }
         
@@ -411,15 +407,12 @@
             Plotly.newPlot(elementId, [trace1, trace2, trace3, spotLine], layout, {responsive: true});
         }
         
-        // Chargement initial
         loadData();
         
-        // Auto-refresh toutes les secondes pour le CSV
         autoRefreshInterval = setInterval(() => {
             loadTradingViewCSV();
         }, 1000);
         
-        // Cleanup au déchargement de la page
         window.addEventListener('beforeunload', () => {
             clearInterval(autoRefreshInterval);
         });
