@@ -9,7 +9,7 @@ import os
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'change_me_in_production_12345')
 
-# IDENTIFIANTS
+# IDENTIFIANTS - À CHANGER !
 USERNAME = os.environ.get('DASH_USERNAME', 'trader')
 PASSWORD = os.environ.get('DASH_PASSWORD', 'greeks2026')
 
@@ -78,13 +78,17 @@ def get_data():
         
         if dte >= 98:
             strike_range = 120
-            min_strike = (int(spot_price - strike_range) // 5) * 5
-            max_strike = ((int(spot_price + strike_range) // 5) + 1) * 5
-            all_strikes = list(range(min_strike, max_strike, 5))
         else:
             strike_range = 30
-            min_strike = int(spot_price - strike_range)
-            max_strike = int(spot_price + strike_range) + 1
+        
+        min_strike = int(spot_price - strike_range)
+        max_strike = int(spot_price + strike_range) + 1
+        
+        if dte >= 98:
+            min_strike = (min_strike // 5) * 5
+            max_strike = ((max_strike // 5) + 1) * 5
+            all_strikes = list(range(min_strike, max_strike, 5))
+        else:
             all_strikes = list(range(min_strike, max_strike))
         
         call_gex = []
@@ -150,7 +154,7 @@ def get_data():
         print(f"Erreur: {e}")
         return jsonify({'error': str(e)}), 500
 
-# ========== NOUVELLE ROUTE POUR TRADINGVIEW ==========
+# NOUVELLE ROUTE POUR TRADINGVIEW CSV
 @app.route('/api/tradingview-csv')
 def tradingview_csv():
     if not session.get('logged_in'):
@@ -160,6 +164,7 @@ def tradingview_csv():
     ticker = request.args.get('ticker', 'SPY').upper()
     
     try:
+        # Récupérer les données (même logique que /api/data)
         stock = yf.Ticker(ticker)
         spot_price = stock.history(period='1d')['Close'].iloc[-1]
         expirations = stock.options
@@ -187,6 +192,7 @@ def tradingview_csv():
             max_strike = int(spot_price + strike_range) + 1
             all_strikes = list(range(min_strike, max_strike))
         
+        # Calculer les Greeks
         gex_data = []
         vanna_data = []
         charm_data = []
@@ -220,14 +226,28 @@ def tradingview_csv():
             vanna_data.append((strike, abs(total_vanna)))
             charm_data.append((strike, abs(total_charm)))
         
+        # Trouver les 5 niveaux les plus importants pour chaque Greek
         top_gex = sorted(gex_data, key=lambda x: x[1], reverse=True)[:5]
         top_vanna = sorted(vanna_data, key=lambda x: x[1], reverse=True)[:5]
         top_charm = sorted(charm_data, key=lambda x: x[1], reverse=True)[:5]
         
+        # Générer le CSV au format TradingView
         csv_lines = []
-        csv_lines.append("GAMMA," + ",".join([str(s[0]) for s in top_gex]))
-        csv_lines.append("VANNA," + ",".join([str(s[0]) for s in top_vanna]))
-        csv_lines.append("CHARM," + ",".join([str(s[0]) for s in top_charm]))
+        csv_lines.append("# Greeks Levels - " + ticker)
+        csv_lines.append("# Expiration: " + selected_exp + " (DTE: " + str(days_to_exp) + ")")
+        csv_lines.append("# Spot: " + str(round(spot_price, 2)))
+        csv_lines.append("# Updated: " + datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        csv_lines.append("")
+        csv_lines.append("type,strike,value,color")
+        
+        for strike, value in top_gex:
+            csv_lines.append(f"GAMMA,{strike},{round(value, 2)},#FF0000")
+        
+        for strike, value in top_vanna:
+            csv_lines.append(f"VANNA,{strike},{round(value, 2)},#0000FF")
+        
+        for strike, value in top_charm:
+            csv_lines.append(f"CHARM,{strike},{round(value, 2)},#00FF00")
         
         csv_text = "\n".join(csv_lines)
         
