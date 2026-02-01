@@ -18,11 +18,14 @@ class GreeksCalculator:
     def calculate_greeks(S, K, T, r, sigma):
         if T <= 0 or sigma <= 0:
             return {'gamma': 0, 'vanna': 0, 'charm': 0}
+        
         d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
         d2 = d1 - sigma * np.sqrt(T)
+        
         gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
         vanna = -norm.pdf(d1) * d2 / sigma
         charm = -norm.pdf(d1) * (2 * r * T - d2 * sigma * np.sqrt(T)) / (2 * T * sigma * np.sqrt(T))
+        
         return {'gamma': gamma, 'vanna': vanna, 'charm': charm}
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -30,13 +33,11 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
-        
         if username == USERNAME and password == PASSWORD:
             session['logged_in'] = True
             return redirect(url_for('index'))
         else:
             return render_template('login.html', error='Identifiants incorrects')
-    
     return render_template('login.html')
 
 @app.route('/logout')
@@ -103,6 +104,7 @@ def get_data():
             
             call_oi = calls['openInterest'].iloc[0] if len(calls) > 0 else 0
             put_oi = puts['openInterest'].iloc[0] if len(puts) > 0 else 0
+            
             call_iv = calls['impliedVolatility'].iloc[0] if len(calls) > 0 and call_oi > 0 else 0.3
             put_iv = puts['impliedVolatility'].iloc[0] if len(puts) > 0 and put_oi > 0 else 0.3
             
@@ -151,6 +153,116 @@ def get_data():
     except Exception as e:
         print(f"Erreur: {e}")
         return jsonify({'error': str(e)}), 500
+
+# NOUVELLE ROUTE POUR TRADINGVIEW CSV
+@app.route('/api/tradingview-csv')
+def tradingview_csv():
+    if not session.get('logged_in'):
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    dte = int(request.args.get('dte', 0))
+    ticker = request.args.get('ticker', 'SPY').upper()
+    
+    try:
+        # Récupérer les données (même logique que /api/data)
+        stock = yf.Ticker(ticker)
+        spot_price = stock.history(period='1d')['Close'].iloc[-1]
+        expirations = stock.options
+        
+        if len(expirations) == 0:
+            return jsonify({'error': 'No options data', 'csv': ''}), 500
+        
+        target_date = datetime.now() + timedelta(days=dte)
+        selected_exp = min(expirations, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - target_date).days))
+        
+        opt_chain = stock.option_chain(selected_exp)
+        exp_date = datetime.strptime(selected_exp, '%Y-%m-%d')
+        days_to_exp = (exp_date - datetime.now()).days
+        T = max(days_to_exp / 365.0, 1/365)
+        r = 0.05
+        
+        if dte >= 98:
+            strike_range = 120
+            min_strike = (int(spot_price - strike_range) // 5) * 5
+            max_strike = ((int(spot_price + strike_range) // 5) + 1) * 5
+            all_strikes = list(range(min_strike, max_strike, 5))
+        else:
+            strike_range = 30
+            min_strike = int(spot_price - strike_range)
+            max_strike = int(spot_price + strike_range) + 1
+            all_strikes = list(range(min_strike, max_strike))
+        
+        # Calculer les Greeks
+        gex_data = []
+        vanna_data = []
+        charm_data = []
+        
+        for strike in all_strikes:
+            calls = opt_chain.calls[opt_chain.calls['strike'] == strike]
+            puts = opt_chain.puts[opt_chain.puts['strike'] == strike]
+            
+            call_oi = calls['openInterest'].iloc[0] if len(calls) > 0 else 0
+            put_oi = puts['openInterest'].iloc[0] if len(puts) > 0 else 0
+            call_iv = calls['impliedVolatility'].iloc[0] if len(calls) > 0 and call_oi > 0 else 0.3
+            put_iv = puts['impliedVolatility'].iloc[0] if len(puts) > 0 and put_oi > 0 else 0.3
+            
+            total_gex = 0
+            total_vanna = 0
+            total_charm = 0
+            
+            if call_oi > 0 and call_iv > 0:
+                greeks = GreeksCalculator.calculate_greeks(spot_price, strike, T, r, call_iv)
+                total_gex += greeks['gamma'] * call_oi * 100 * spot_price * spot_price * 0.01 / 1e6
+                total_vanna += greeks['vanna'] * call_oi * 100
+                total_charm += greeks['charm'] * call_oi * 100
+            
+            if put_oi > 0 and put_iv > 0:
+                greeks = GreeksCalculator.calculate_greeks(spot_price, strike, T, r, put_iv)
+                total_gex += greeks['gamma'] * put_oi * 100 * spot_price * spot_price * 0.01 * -1 / 1e6
+                total_vanna += greeks['vanna'] * put_oi * 100 * -1
+                total_charm += greeks['charm'] * put_oi * 100 * -1
+            
+            gex_data.append((strike, abs(total_gex)))
+            vanna_data.append((strike, abs(total_vanna)))
+            charm_data.append((strike, abs(total_charm)))
+        
+        # Trouver les 5 niveaux les plus importants pour chaque Greek
+        top_gex = sorted(gex_data, key=lambda x: x[1], reverse=True)[:5]
+        top_vanna = sorted(vanna_data, key=lambda x: x[1], reverse=True)[:5]
+        top_charm = sorted(charm_data, key=lambda x: x[1], reverse=True)[:5]
+        
+        # Générer le CSV au format TradingView
+        csv_lines = []
+        csv_lines.append("# Greeks Levels - " + ticker)
+        csv_lines.append("# Expiration: " + selected_exp + " (DTE: " + str(days_to_exp) + ")")
+        csv_lines.append("# Spot: " + str(round(spot_price, 2)))
+        csv_lines.append("# Updated: " + datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        csv_lines.append("")
+        csv_lines.append("type,strike,value,color")
+        
+        for strike, value in top_gex:
+            csv_lines.append(f"GAMMA,{strike},{round(value, 2)},#FF0000")
+        
+        for strike, value in top_vanna:
+            csv_lines.append(f"VANNA,{strike},{round(value, 2)},#0000FF")
+        
+        for strike, value in top_charm:
+            csv_lines.append(f"CHARM,{strike},{round(value, 2)},#00FF00")
+        
+        csv_text = "\n".join(csv_lines)
+        
+        return jsonify({
+            'csv': csv_text,
+            'ticker': ticker,
+            'spot': spot_price,
+            'expiration': selected_exp,
+            'dte': days_to_exp,
+            'timestamp': datetime.now().strftime('%H:%M:%S')
+        })
+    
+    except Exception as e:
+        print(f"Erreur: {e}")
+        return jsonify({'error': str(e), 'csv': ''}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
